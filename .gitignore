@@ -1,0 +1,37 @@
+# Python caches
+__pycache__/
+*.pyc
+
+# Local binary IQ captures
+*.cf32
+*.bin
+*.iq
+*.raw
+*.sigmf-data
+*.sigmf-meta
+
+# Generated diagnostic plots
+*_plot.png
+*_diagnostics.png
+demod_diagnostics.png
+reconstructed_frame.png
+
+# Generated reports (any prefix)
+*_report.md
+
+# Audio/video outputs
+*.wav
+
+# Sweep intermediates
+sweep.csv
+temp_capture.bin
+
+# OS files
+.DS_Store
+
+# Presentation
+presentation_draft.md
+
+# Output files from app server runs
+captures/*.png
+captures/*_report*.md
