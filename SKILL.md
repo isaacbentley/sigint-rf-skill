@@ -186,6 +186,12 @@ python3 tools/generate_demo_signal.py --type gmsk --duration 0.5 --sample_rate 2
 ```
 *Then triage and demodulate it with the steps below (for this demo signal, use `--mode fsk --symbol-rate 100000`).*
 
+To instead practice the **analog FPV video** pipeline (NTSC/PAL, 5.8 GHz, writes a matching `.sigmf-meta`):
+```bash
+python3 tools/generate_demo_signal.py --type analog_video --standard ntsc --audio_subcarrier --output_file captures/demo_fpv.cf32
+```
+*Then `python3 tools/explainable_demod.py --file captures/demo_fpv.sigmf-meta --mode analog_video` — the standard and line geometry are auto-detected. Add `--image <file>` to the generator to transmit a real picture instead of test bars, and `--json-output out.json` to the demod (or triage) to capture the detected standard + subcarrier as JSON. Full walkthrough: [examples/fpv_analog_triage.md](examples/fpv_analog_triage.md).*
+
 ### 1. Automated Wideband Scan & Capture
 ```bash
 python3 tools/discover_and_capture.py --start 433M --stop 435M -o capture.cf32
@@ -205,11 +211,13 @@ python3 tools/explainable_demod.py --file capture.cf32 --rate 2048000 --mode fsk
 ```
 * **Voice Audio Recovery**: Use `--mode fm_audio` or `--mode am_audio` to demodulate, decimate, filter, and save as a `.wav` file.
 * **Continuous Analog Baseband**: Use `--mode analog_fm` or `--mode analog_am` to bypass digital symbol recovery and extract a 4-panel baseband diagnostic dashboard (Short Time, Long Time, PSD, Spectrogram).
-* **Analog Video Triage**: Use `--mode analog_video` (with `--line-samples` and `--video-lines`). This mode uses an **amplitude sync separator** to dynamically lock onto horizontal sync pulses, preventing frame shearing, and outputs both the reconstructed frame and the 4-panel baseband dashboard. You MUST still calculate approximate `line-samples` to guide the sync-locker. For NTSC (15734 Hz): `line_samples = sample_rate / 15734`, `video_lines = 525`. For PAL (15625 Hz): `line_samples = sample_rate / 15625`, `video_lines = 625`.
+* **Analog Video Triage**: Use `--mode analog_video`. This mode FM-demodulates, **auto-measures the line rate and lines-per-frame to identify NTSC vs PAL**, and uses an **amplitude sync separator** to lock onto horizontal sync pulses (preventing frame shearing). `--line-samples` and `--video-lines` are **auto-derived** from the detected standard — pass them only to override. It also reports any **FM audio subcarrier** near 6.0/6.5 MHz (rejecting line-rate harmonics, which on PAL sit exactly at 6.0/6.5 MHz), and outputs the reconstructed frame plus the 4-panel baseband dashboard. Reference timings: NTSC 15734 Hz / 525 lines (63.56 µs), PAL 15625 Hz / 625 lines (64.0 µs).
 
 ### 🚨 Critical Trap: IQ Data Types (`ci16_le` vs `cf32_le`)
 If a IQ data file lacks metadata about it's format, `triage_iq.py` may mistakenly default to `ci16_le` (16-bit complex int). However, if the file was synthesized via NumPy or GNU Radio, it is usually `cf32_le` (32-bit complex float). 
 **Symptoms of a Format Mismatch**: If you read `cf32_le` as `ci16_le`, the demodulator will output absolute random white noise. In FM demodulation, this looks like the instantaneous frequency frantically bouncing between perfectly $-F_s/2$ and $+F_s/2$ uniformly. If you see this, STOP, and re-run with `--format cf32_le`.
+
+**Tip — avoid the trap with SigMF**: Pass a `.sigmf-meta` file to `triage_iq.py` *or* `explainable_demod.py` and the datatype, sample rate, and center frequency are read straight from the metadata — no `--rate` or `--format` needed. Both tools also bound their reads (`--duration` / `--max-samples`), so a multi-GB wideband capture won't be slurped whole into RAM.
 
 ### 4. Manual SDR Captures (If capturing live)
 * **RTL-SDR**: `rtl_sdr -f 433920000 -s 2048000 -g 30 capture.bin` (converts to raw uint8 IQ)

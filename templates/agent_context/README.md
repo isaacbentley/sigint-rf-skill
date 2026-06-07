@@ -10,7 +10,7 @@ Welcome, Agent. This directory contains detailed reference guidelines to help yo
     *   [triage_iq.py](../../tools/triage_iq.py) — Extracts physical layer metrics and outputs markdown reports/JSON.
     *   [explainable_demod.py](../../tools/explainable_demod.py) — Interactive step-by-step demodulator for various modulations.
     *   [discover_and_capture.py](../../tools/discover_and_capture.py) — Performs wideband scans and logs captures.
-    *   [generate_demo_signal.py](../../tools/generate_demo_signal.py) — Synthesizes a practice IQ capture (e.g. a GMSK burst with a hidden payload) when the operator has no SDR or recording.
+    *   [generate_demo_signal.py](../../tools/generate_demo_signal.py) — Synthesizes a practice IQ capture (a GMSK/FSK/FM burst, or an `analog_video` NTSC/PAL FPV signal that also writes a matching `.sigmf-meta`) when the operator has no SDR or recording.
 *   **`signals/`**: Reference specifications and triage hints for known RF protocols (e.g. ADS-B, AIS, LoRa, DJI OcuSync).
 *   **`templates/agent_context/`**: Detailed guides for your runtime:
     *   [README.md](README.md) — (This file) Overview and operational workflow.

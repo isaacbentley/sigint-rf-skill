@@ -41,7 +41,9 @@ def parse_args():
     parser.add_argument("--file", "-f", required=True, help="Path to IQ sample file")
     parser.add_argument("--rate", "-r", type=float, default=15.36e6, help="Sample rate in Hz")
     parser.add_argument("--freq", "-c", type=float, default=None, help="Assigned center frequency in Hz")
-    parser.add_argument("--format", choices=["cf32_le", "ci16_le"], default="cf32_le", help="IQ format")
+    parser.add_argument("--format", choices=["cf32_le", "ci16_le"], default=None, help="IQ format (autodetected / from SigMF metadata if omitted)")
+    parser.add_argument("--duration", type=float, default=0.0, help="Seconds of data to read (0 = use --max-samples)")
+    parser.add_argument("--max-samples", type=int, default=20_000_000, help="Max complex samples to read when --duration is 0 (bounds RAM on large captures)")
     parser.add_argument("--mode", choices=["fsk", "ook", "fm_audio", "am_audio", "analog_video", "psk", "qam", "lora", "ofdm", "sc-fdma", "analog_fm", "analog_am"], required=True, help="Demodulation mode")
     
     # Signal tuning & decoding parameters
@@ -49,8 +51,8 @@ def parse_args():
     parser.add_argument("--offset-hz", type=float, default=0.0, help="Manual frequency offset to correct (Hz)")
     parser.add_argument("--channel-bw", type=float, help="Bandwidth of the channel to isolate (Hz). Eliminates adjacent signals.")
     parser.add_argument("--audio-rate", type=float, default=48000.0, help="Target FM audio sample rate")
-    parser.add_argument("--line-samples", type=int, default=1280, help="PAL/NTSC video samples per line")
-    parser.add_argument("--video-lines", type=int, default=576, help="Video active line count")
+    parser.add_argument("--line-samples", type=int, default=None, help="PAL/NTSC video samples per line (auto-measured if omitted)")
+    parser.add_argument("--video-lines", type=int, default=None, help="Video active line count (auto-derived from detected standard if omitted)")
     parser.add_argument("--psk-order", type=int, default=4, help="Order of PSK (2=BPSK, 4=QPSK, 8=8PSK)")
     parser.add_argument("--qam-order", type=int, default=16, help="Order of QAM (16, 64, 256)")
     
@@ -66,8 +68,9 @@ def parse_args():
     parser.add_argument("--plot-path", default="demod_diagnostics.png", help="Path to save intermediate DSP diagnostics plot")
     parser.add_argument("--verbose", "-v", action="store_true", help="Print detailed DSP steps and logic")
     parser.add_argument("--output-bits", default=None, help="Path to write recovered FSK bits as a text file (one char per bit, newline every 128 bits)")
+    parser.add_argument("--json-output", default=None, help="Path to write a JSON file with mode-specific analysis (e.g. analog_video standard + audio subcarrier)")
     
-    return parser.parse_args()
+    return parser.parse_args(normalize_numeric_argv())
 
 def explain_step(title, description, math_formula=None):
     print(f"\n💡 [DSP STEP] {title}")
@@ -76,30 +79,128 @@ def explain_step(title, description, math_formula=None):
         print(f"   Formula:     {math_formula}")
     print("-" * 60)
 
-def load_iq(filepath, datatype):
-    if not os.path.exists(filepath):
-        print(f"Error: File not found at {filepath}", file=sys.stderr)
+def load_sigmf_metadata(meta_path):
+    with open(meta_path, "r") as f:
+        meta = json.load(f)
+
+    # Try to find core properties
+    global_meta = meta.get("global", {})
+    datatype = global_meta.get("core:datatype", "cf32_le")
+    sample_rate = global_meta.get("core:sample_rate", None)
+
+    captures = meta.get("captures", [])
+    frequency = None
+    if captures:
+        frequency = captures[0].get("core:frequency", None)
+
+    return datatype, sample_rate, frequency
+
+
+def resolve_paths_and_metadata(args):
+    filepath = args.file
+    filename, ext = os.path.splitext(filepath)
+
+    datatype = args.format
+    sample_rate = args.rate
+    frequency = args.freq
+    data_path = filepath
+
+    # Check if we were passed a .sigmf-meta or if one exists alongside a raw file
+    if ext == ".sigmf-meta":
+        datatype_meta, rate_meta, freq_meta = load_sigmf_metadata(filepath)
+        if not datatype:
+            datatype = datatype_meta
+        if rate_meta is not None:
+            sample_rate = rate_meta
+        if freq_meta is not None:
+            frequency = freq_meta
+        # Find data file
+        for suffix in [".sigmf-data", ".data", ".bin", ".cf32", ".raw", ".iq"]:
+            test_path = filename + suffix
+            if os.path.exists(test_path):
+                data_path = test_path
+                break
+    elif ext == ".sigmf-data" or os.path.exists(filename + ".sigmf-meta"):
+        meta_path = filename + ".sigmf-meta"
+        if os.path.exists(meta_path):
+            datatype_meta, rate_meta, freq_meta = load_sigmf_metadata(meta_path)
+            if not datatype:
+                datatype = datatype_meta
+            if rate_meta is not None:
+                sample_rate = rate_meta
+            if freq_meta is not None:
+                frequency = freq_meta
+
+    # Fallback auto-detection by extension
+    if not datatype:
+        if ext in [".cf32", ".data"] or "cf32" in filepath:
+            datatype = "cf32_le"
+        else:
+            datatype = "ci16_le"  # Default fallback safe for SDR captures
+
+    return data_path, datatype, sample_rate, frequency
+
+
+def read_iq_samples(file_path, datatype, max_samples):
+    if not os.path.exists(file_path):
+        print(f"Error: Data file not found at {file_path}", file=sys.stderr)
         sys.exit(1)
-    
-    explain_step(
-        "Loading IQ Samples",
-        f"Reading raw IQ data from {os.path.basename(filepath)} using format {datatype}.",
-        "Complex Sample = I[n] + j*Q[n]"
-    )
-    
+
     if datatype == "cf32_le":
-        raw = np.fromfile(filepath, dtype=np.float32)
+        count = max_samples * 2
+        raw = np.fromfile(file_path, dtype=np.float32, count=count)
         if len(raw) % 2 != 0:
             raw = raw[:-1]
         samples = raw[0::2] + 1j * raw[1::2]
-    else: # ci16_le
-        raw = np.fromfile(filepath, dtype=np.int16)
+    elif datatype == "ci16_le":
+        count = max_samples * 2
+        raw = np.fromfile(file_path, dtype=np.int16, count=count)
         if len(raw) % 2 != 0:
             raw = raw[:-1]
         samples = (raw[0::2] + 1j * raw[1::2]) / 32768.0
-        
-    print(f"   Successfully loaded {len(samples)} complex samples.")
+    else:
+        print(f"Error: Unsupported datatype {datatype}", file=sys.stderr)
+        sys.exit(1)
+
     return samples
+
+
+# Options that take a (possibly negative) numeric value. argparse's built-in
+# negative-number detector rejects scientific notation (e.g. -25e6) and treats it
+# as an unknown option, so we merge "--flag -25e6" -> "--flag=-25e6".
+_NUMERIC_FLAGS = {
+    "--offset-hz", "--channel-bw", "--freq", "-c", "--rate", "-r",
+    "--symbol-rate", "--audio-rate", "--lora-bw", "--duration", "--max-samples",
+    "--start", "--stop",
+}
+
+
+def _looks_like_negative_number(s):
+    if not s.startswith("-"):
+        return False
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
+
+def normalize_numeric_argv(argv=None):
+    """Rewrite "--flag -25e6" to "--flag=-25e6" for known numeric options so a
+    negative scientific-notation value is not misparsed by argparse as a flag."""
+    src = list(sys.argv[1:] if argv is None else argv)
+    out = []
+    i = 0
+    while i < len(src):
+        tok = src[i]
+        if tok in _NUMERIC_FLAGS and i + 1 < len(src) and _looks_like_negative_number(src[i + 1]):
+            out.append(f"{tok}={src[i + 1]}")
+            i += 2
+        else:
+            out.append(tok)
+            i += 1
+    return out
+
 
 def apply_frequency_shift(samples, sample_rate, offset_hz):
     """
@@ -1027,6 +1128,100 @@ def plot_baseband_dashboard(demod, sample_rate, plot_path, title, is_am=False):
     plt.savefig(plot_path, dpi=150)
     plt.close()
 
+def analyze_video_standard(demod, sample_rate):
+    """Measure the horizontal line rate and lines-per-frame from FM-demodulated
+    composite video and classify NTSC vs PAL. Label-independent. Returns a dict
+    or None if no clear raster periodicity is present.
+
+    Line rate is the primary discriminator (NTSC 15734 Hz vs PAL 15625 Hz);
+    lines-per-frame corroborates (NTSC 525 vs PAL 625). The frame count is found
+    by collapsing each line to its mean (which kills in-line picture content) so
+    the residual periodicity is the vertical/frame structure."""
+    v = np.asarray(demod, dtype=float)
+    n = len(v)
+    if n < int(0.02 * sample_rate):            # need a few tens of lines
+        return None
+    # Bound the analysis window to ~0.2 s (still spans many lines and several
+    # frames) so we never FFT a multi-second capture.
+    w = min(n, int(0.2 * sample_rate))
+    v = v[:w] - v[:w].mean()
+    n = w
+
+    def _acf(x):
+        m = len(x)
+        f = np.fft.rfft(x, 2 * m)
+        a = np.fft.irfft(f * np.conj(f))[:m]
+        return a / (a[0] + 1e-12)
+
+    a = _acf(v)
+    lo, hi = int(60e-6 * sample_rate), int(67e-6 * sample_rate)
+    if hi >= len(a) or hi <= lo:
+        return None
+    line_len = lo + int(np.argmax(a[lo:hi]))   # samples per horizontal line
+    if line_len <= 0:
+        return None
+    line_hz = sample_rate / line_len
+
+    frame_lines_meas = None
+    m = n // line_len
+    if m >= 700:                               # need >1 full frame for a valid [400,700] search
+        rows = v[:m * line_len].reshape(m, line_len).mean(axis=1)
+        al = _acf(rows - rows.mean())
+        flo, fhi = 400, min(700, len(al) - 1)
+        if fhi > flo:
+            frame_lines_meas = flo + int(np.argmax(al[flo:fhi]))
+
+    if abs(line_hz - 15734.0) <= abs(line_hz - 15625.0):
+        name, lines_canon, line_hz_canon = "NTSC", 525, 15734.0
+    else:
+        name, lines_canon, line_hz_canon = "PAL", 625, 15625.0
+
+    return {
+        "standard": name,
+        "line_samples": int(line_len),
+        "line_us": 1e6 / line_hz,
+        "line_hz": line_hz,
+        "line_hz_canonical": line_hz_canon,
+        "frame_lines_measured": frame_lines_meas,
+        "frame_lines_canonical": lines_canon,
+    }
+
+
+def detect_audio_subcarrier(demod, sample_rate, line_hz=0.0):
+    """Detect an FM audio subcarrier near 6.0/6.5 MHz in the composite baseband.
+    Rejects candidates that are integer multiples of the line rate, which are
+    horizontal-sync harmonics rather than a genuine subcarrier (e.g. for PAL,
+    6.0 and 6.5 MHz are exactly 384x and 416x the 15625 Hz line rate)."""
+    v = np.asarray(demod, dtype=float)
+    v = v[:min(len(v), 2_000_000)]             # bound welch input on large captures
+    nper = int(min(131072, len(v)))
+    if nper < 1024:
+        return {"present": False}
+    f, P = signal.welch(v, fs=sample_rate, nperseg=nper)
+    PdB = 10.0 * np.log10(P + 1e-20)
+    candidates = []
+    for target in (6.0e6, 6.5e6):
+        if target >= f[-1]:
+            continue
+        k = int(np.argmin(np.abs(f - target)))
+        local = (f > target - 3e5) & (f < target + 3e5)
+        prom = float(PdB[k] - np.median(PdB[local]))
+        ratio = target / line_hz if line_hz else 0.0
+        harmonic = (abs(ratio - round(ratio)) < 0.01) if line_hz else False
+        candidates.append({"freq_hz": target, "prominence_db": prom,
+                           "harmonic": harmonic, "harmonic_index": int(round(ratio))})
+    strong = [c for c in candidates if c["prominence_db"] > 6.0]
+    if not strong:
+        return {"status": "absent"}
+    best = max(strong, key=lambda c: c["prominence_db"])
+    # A real subcarrier and a line-rate harmonic can land on the same frequency
+    # (on PAL, 6.0/6.5 MHz are exact line harmonics). If the strongest candidate
+    # coincides with a harmonic, don't claim a distinct subcarrier.
+    if best["harmonic"]:
+        return {"status": "ambiguous_harmonic", **best}
+    return {"status": "present", **best}
+
+
 def process_analog_video(samples, sample_rate, line_samples, num_lines, plot_path=None):
     """
     Rasterizes an FM-demodulated analog video baseband signal into a 2D image 
@@ -1034,7 +1229,43 @@ def process_analog_video(samples, sample_rate, line_samples, num_lines, plot_pat
     """
     # 1. Demodulate FM envelope
     demod = demodulate_fm(samples, sample_rate)
-    
+
+    # Measure the video standard straight from the demod (label-independent) and
+    # auto-derive raster geometry when the operator did not specify it.
+    std_info = analyze_video_standard(demod, sample_rate)
+    if std_info:
+        fl = std_info["frame_lines_measured"]
+        fl_txt = f"~{fl} lines/frame" if fl else "frame count unresolved"
+        print(f"   📺 Detected standard: {std_info['standard']} "
+              f"(line {std_info['line_us']:.2f} us / {std_info['line_hz']:.0f} Hz, {fl_txt})")
+    canon_line = std_info["line_hz_canonical"] if std_info else 0.0
+    sc = detect_audio_subcarrier(demod, sample_rate, canon_line)
+    if sc.get("status") == "present":
+        print(f"   🔊 Audio subcarrier: PRESENT near {sc['freq_hz'] / 1e6:.1f} MHz "
+              f"(+{sc['prominence_db']:.1f} dB above local floor)")
+    elif sc.get("status") == "ambiguous_harmonic":
+        print(f"   ⚠️ Audio subcarrier: energy near {sc['freq_hz'] / 1e6:.1f} MHz coincides with the "
+              f"{sc['harmonic_index']}x line-rate harmonic — cannot confirm a distinct subcarrier")
+    else:
+        print(f"   🔇 Audio subcarrier: not detected near 6.0/6.5 MHz")
+    if line_samples is None:
+        line_samples = std_info["line_samples"] if std_info else 1280
+        print(f"   Auto-derived line length: {line_samples} samples/line")
+    if num_lines is None:
+        num_lines = std_info["frame_lines_canonical"] if std_info else 576
+
+    analysis = {
+        "video_standard": std_info["standard"] if std_info else None,
+        "video_line_us": round(std_info["line_us"], 3) if std_info else None,
+        "video_line_hz": round(std_info["line_hz"], 1) if std_info else None,
+        "video_frame_lines": std_info["frame_lines_measured"] if std_info else None,
+        "audio_subcarrier_status": sc.get("status", "absent"),
+        "audio_subcarrier_hz": sc.get("freq_hz"),
+        "audio_subcarrier_prominence_db": (round(sc["prominence_db"], 1)
+                                           if "prominence_db" in sc else None),
+    }
+
+
     if plot_path:
         plot_baseband_dashboard(demod, sample_rate, plot_path.replace(".png", "_dashboard.png"), title="Analog Video Baseband Diagnostics", is_am=False)
 
@@ -1125,7 +1356,7 @@ def process_analog_video(samples, sample_rate, line_samples, num_lines, plot_pat
         frame.append(row)
         
     if len(frame) == 0:
-        return np.array([])
+        return np.array([]), analysis
         
     # Normalize the entire frame at once (better than row-by-row to preserve brightness)
     frame_array = np.array(frame)
@@ -1135,7 +1366,7 @@ def process_analog_video(samples, sample_rate, line_samples, num_lines, plot_pat
     f_max = np.percentile(frame_array, 98)
     frame_norm = np.clip((frame_array - f_min) / (f_max - f_min + 1e-12), 0, 1) * 255
     
-    return frame_norm.astype(np.uint8)
+    return frame_norm.astype(np.uint8), analysis
 
 
 
@@ -1175,8 +1406,16 @@ def process_analog_am(samples, sample_rate, plot_path, verbose=False):
 def main():
     args = parse_args()
     
-    # 1. Load IQ data
-    samples = load_iq(args.file, args.format)
+    # 1. Resolve SigMF / raw paths + metadata, then read a bounded slice of IQ
+    data_path, datatype, sample_rate, frequency = resolve_paths_and_metadata(args)
+    if sample_rate:
+        args.rate = sample_rate
+    if frequency is not None and args.freq is None:
+        args.freq = frequency
+    max_samples = int(args.duration * args.rate) if args.duration and args.duration > 0 else args.max_samples
+    samples = read_iq_samples(data_path, datatype, max_samples)
+    print(f"   Loaded {len(samples)} complex samples from {os.path.basename(data_path)} "
+          f"(format {datatype}, rate {args.rate / 1e6:.3f} MSPS).")
     
     # 2. Baseband Frequency Shift
     if args.offset_hz != 0:
@@ -1296,7 +1535,7 @@ def main():
         print(f"   (See constellation plot for grid alignment)")
 
     elif args.mode == "analog_video":
-        frame_img = process_analog_video(samples, args.rate, args.line_samples, args.video_lines, args.plot_path)
+        frame_img, analysis = process_analog_video(samples, args.rate, args.line_samples, args.video_lines, args.plot_path)
         
         if len(frame_img) > 0:
             try:
@@ -1318,7 +1557,19 @@ def main():
                 print(f"   Dashboard saved to: {args.plot_path.replace('.png', '_dashboard.png')}")
         else:
             print("Error: Could not reconstruct any video lines from baseband samples.", file=sys.stderr)
-            
+
+        if args.json_output:
+            out = {
+                "mode": "analog_video",
+                "sample_rate": args.rate,
+                "center_freq": args.freq,
+                "num_samples": int(len(samples)),
+                **analysis,
+            }
+            with open(args.json_output, "w") as jf:
+                json.dump(out, jf, indent=2)
+            print(f"   JSON analysis written to: {args.json_output}")
+
     elif args.mode == "lora":
         symbol_vals = process_lora(samples, args.rate, args.lora_bw, args.lora_sf, args.plot_path, args.verbose)
         print(f"\n📊 Demodulation Completed (LoRa Mode)")

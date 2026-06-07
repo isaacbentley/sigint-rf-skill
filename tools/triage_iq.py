@@ -16,6 +16,43 @@ try:
 except ImportError:
     pass
 
+# Options that take a (possibly negative) numeric value. argparse's built-in
+# negative-number detector rejects scientific notation (e.g. -25e6) and treats it
+# as an unknown option, so we merge "--flag -25e6" -> "--flag=-25e6".
+_NUMERIC_FLAGS = {
+    "--offset-hz", "--channel-bw", "--freq", "-c", "--rate", "-r",
+    "--symbol-rate", "--audio-rate", "--lora-bw", "--duration", "--max-samples",
+    "--start", "--stop",
+}
+
+
+def _looks_like_negative_number(s):
+    if not s.startswith("-"):
+        return False
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
+
+def normalize_numeric_argv(argv=None):
+    """Rewrite "--flag -25e6" to "--flag=-25e6" for known numeric options so a
+    negative scientific-notation value is not misparsed by argparse as a flag."""
+    src = list(sys.argv[1:] if argv is None else argv)
+    out = []
+    i = 0
+    while i < len(src):
+        tok = src[i]
+        if tok in _NUMERIC_FLAGS and i + 1 < len(src) and _looks_like_negative_number(src[i + 1]):
+            out.append(f"{tok}={src[i + 1]}")
+            i += 2
+        else:
+            out.append(tok)
+            i += 1
+    return out
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Extract spectral and temporal features from IQ data to generate an LLM Triage Report."
@@ -98,7 +135,7 @@ def parse_args():
         action="store_true",
         help="Do not suppress the central DC local oscillator (LO) leakage spike in PSD peak finding."
     )
-    return parser.parse_args()
+    return parser.parse_args(normalize_numeric_argv())
 
 def load_sigmf_metadata(meta_path):
     with open(meta_path, "r") as f:
@@ -140,8 +177,8 @@ def resolve_paths_and_metadata(args):
             if os.path.exists(test_path):
                 data_path = test_path
                 break
-    elif ext == ".sigmf-data" or os.path.exists(filepath + ".sigmf-meta"):
-        meta_path = filepath + ".sigmf-meta" if ext != ".sigmf-data" else filename + ".sigmf-meta"
+    elif ext == ".sigmf-data" or os.path.exists(filename + ".sigmf-meta"):
+        meta_path = filename + ".sigmf-meta"
         if os.path.exists(meta_path):
             datatype_meta, rate_meta, freq_meta = load_sigmf_metadata(meta_path)
             if not datatype:
@@ -785,6 +822,92 @@ Low-Freq [{ascii_psd_str}] High-Freq
         f.write(report)
     print(f"Overview report written successfully to: {output_path}")
 
+def analyze_video_standard(demod, sample_rate):
+    """Measure horizontal line rate and lines-per-frame from FM-demodulated composite
+    video and classify NTSC vs PAL. Returns a dict or None if no clear raster.
+
+    (Intentionally duplicated from explainable_demod.py — the CLI tools are kept
+    self-contained, with no shared module.)"""
+    v = np.asarray(demod, dtype=float)
+    n = len(v)
+    if n < int(0.02 * sample_rate):            # need a few tens of lines
+        return None
+    # Bound the analysis window to ~0.2 s so we never FFT a multi-second capture.
+    w = min(n, int(0.2 * sample_rate))
+    v = v[:w] - v[:w].mean()
+    n = w
+
+    def _acf(x):
+        m = len(x)
+        f = np.fft.rfft(x, 2 * m)
+        a = np.fft.irfft(f * np.conj(f))[:m]
+        return a / (a[0] + 1e-12)
+
+    a = _acf(v)
+    lo, hi = int(60e-6 * sample_rate), int(67e-6 * sample_rate)
+    if hi >= len(a) or hi <= lo:
+        return None
+    line_len = lo + int(np.argmax(a[lo:hi]))   # samples per horizontal line
+    if line_len <= 0:
+        return None
+    line_hz = sample_rate / line_len
+
+    frame_lines_meas = None
+    m = n // line_len
+    if m >= 700:                               # need >1 full frame for a valid [400,700] search
+        rows = v[:m * line_len].reshape(m, line_len).mean(axis=1)
+        al = _acf(rows - rows.mean())
+        flo, fhi = 400, min(700, len(al) - 1)
+        if fhi > flo:
+            frame_lines_meas = flo + int(np.argmax(al[flo:fhi]))
+
+    if abs(line_hz - 15734.0) <= abs(line_hz - 15625.0):
+        name, lines_canon, line_hz_canon = "NTSC", 525, 15734.0
+    else:
+        name, lines_canon, line_hz_canon = "PAL", 625, 15625.0
+
+    return {
+        "standard": name,
+        "line_samples": int(line_len),
+        "line_us": 1e6 / line_hz,
+        "line_hz": line_hz,
+        "line_hz_canonical": line_hz_canon,
+        "frame_lines_measured": frame_lines_meas,
+        "frame_lines_canonical": lines_canon,
+    }
+
+
+def detect_audio_subcarrier(demod, sample_rate, line_hz=0.0):
+    """Detect an FM audio subcarrier near 6.0/6.5 MHz in the composite baseband,
+    rejecting line-rate harmonics (on PAL, 6.0/6.5 MHz are exactly 384x/416x the
+    15625 Hz line rate). Intentionally duplicated from explainable_demod.py."""
+    v = np.asarray(demod, dtype=float)
+    v = v[:min(len(v), 2_000_000)]             # bound welch input on large captures
+    nper = int(min(131072, len(v)))
+    if nper < 1024:
+        return {"status": "absent"}
+    f, P = signal.welch(v, fs=sample_rate, nperseg=nper)
+    PdB = 10.0 * np.log10(P + 1e-20)
+    candidates = []
+    for target in (6.0e6, 6.5e6):
+        if target >= f[-1]:
+            continue
+        k = int(np.argmin(np.abs(f - target)))
+        local = (f > target - 3e5) & (f < target + 3e5)
+        prom = float(PdB[k] - np.median(PdB[local]))
+        ratio = target / line_hz if line_hz else 0.0
+        harmonic = (abs(ratio - round(ratio)) < 0.01) if line_hz else False
+        candidates.append({"freq_hz": target, "prominence_db": prom,
+                           "harmonic": harmonic, "harmonic_index": int(round(ratio))})
+    strong = [c for c in candidates if c["prominence_db"] > 6.0]
+    if not strong:
+        return {"status": "absent"}
+    best = max(strong, key=lambda c: c["prominence_db"])
+    if best["harmonic"]:
+        return {"status": "ambiguous_harmonic", **best}
+    return {"status": "present", **best}
+
+
 def main():
     args = parse_args()
     
@@ -828,6 +951,31 @@ def main():
     
     # 5. Compute temporal metrics
     temp_res = analyze_temporal(samples, sample_rate, snr_db=spec_res["snr_db"], acf_res=acf_res)
+
+    # Analog-video standard detection for constant-envelope wideband FM (FPV/CVBS).
+    # Gated on the fingerprint so we only FM-demod + measure when it looks like video.
+    video_info = None
+    if (args.mode == "triage" and not temp_res["is_bursty"] and spec_res["snr_db"] > 5.0
+            and spec_res["flatness"] < 0.4 and temp_res["papr_db"] < 5.0
+            and temp_res["freq_dev_hz"] > 0.5e6):
+        seg = samples[:int(min(len(samples), 0.2 * sample_rate))]
+        vdemod = np.angle(seg[1:] * np.conjugate(seg[:-1]))
+        std_v = analyze_video_standard(vdemod, sample_rate)
+        if std_v:
+            sc_v = detect_audio_subcarrier(vdemod, sample_rate, std_v["line_hz_canonical"])
+            video_info = {
+                "video_standard": std_v["standard"],
+                "video_line_us": round(std_v["line_us"], 3),
+                "video_line_hz": round(std_v["line_hz"], 1),
+                "video_frame_lines": std_v["frame_lines_measured"],
+                "audio_subcarrier_status": sc_v.get("status", "absent"),
+                "audio_subcarrier_hz": sc_v.get("freq_hz"),
+                "audio_subcarrier_prominence_db": (round(sc_v["prominence_db"], 1)
+                                                   if "prominence_db" in sc_v else None),
+            }
+            print(f"📺 Analog video standard: {std_v['standard']} "
+                  f"(line {std_v['line_us']:.2f} us / {std_v['line_hz']:.0f} Hz); "
+                  f"audio subcarrier: {sc_v.get('status', 'absent')}")
     
     # 6. Generate plots if matplotlib is available
     plot_filename = None
@@ -858,6 +1006,8 @@ def main():
             "peak_lags": [int(x) for x in acf_res["peak_lags"]],
             "peak_vals": [float(x) for x in acf_res["peak_vals"]],
         }
+        if video_info:
+            json_metrics.update(video_info)
         with open(args.json_output, "w") as jf:
             json.dump(json_metrics, jf, indent=2)
         print(f"JSON metrics written to: {args.json_output}")

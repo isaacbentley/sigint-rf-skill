@@ -12,13 +12,17 @@ python3 tools/explainable_demod.py --file <path> --mode <mode> --rate <sample_ra
 
 | Argument | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `--file` | String | *Required* | Path to the raw IQ sample file. |
-| `--mode` | Choice | *Required* | Demodulation mode: `fsk`, `ook`, `fm_audio`, `am_audio`, `analog_video`, `psk`, `qam`, `lora`, `ofdm`, `sc-fdma`. |
-| `--rate` | Float | `15.36e6` | Sample rate of the capture in Hz. |
-| `--format` | Choice | `cf32_le` | IQ format: `cf32_le` (float32 complex) or `ci16_le` (int16 complex). |
-| `--offset-hz`| Float | `0.0` | Manual frequency offset shift in Hz (use this to center the signal if it is off-center). |
+| `--file` | String | *Required* | Path to the IQ file. Accepts a `.sigmf-meta` / `.sigmf-data` — sample rate, datatype, and center frequency are auto-loaded from the metadata. |
+| `--mode` | Choice | *Required* | Demodulation mode: `fsk`, `ook`, `fm_audio`, `am_audio`, `analog_video`, `analog_fm`, `analog_am`, `psk`, `qam`, `lora`, `ofdm`, `sc-fdma`. |
+| `--rate` | Float | `15.36e6` | Sample rate in Hz. Ignored when SigMF metadata supplies it. |
+| `--format` | Choice | *auto* | IQ format: `cf32_le` or `ci16_le`. Auto-detected from SigMF / file extension if omitted. |
+| `--duration` | Float | `0.0` | Seconds of data to read (`0` = use `--max-samples`). |
+| `--max-samples` | Int | `20000000` | Cap on complex samples read when `--duration` is 0 — bounds RAM on large (multi-GB) captures. |
+| `--offset-hz`| Float | `0.0` | Frequency shift in Hz to center the signal. Negative scientific notation works (e.g. `--offset-hz -25e6`). |
+| `--channel-bw`| Float | `None` | Low-pass channel-isolation bandwidth in Hz (rejects adjacent signals). |
 | `--plot-path`| String | `demod_diagnostics.png` | Destination path to save intermediate DSP graphs. |
 | `--verbose` | Flag | `False` | Print detailed step-by-step DSP mathematical explanations. |
+| `--json-output` | String | `None` | Write mode-specific analysis to JSON. For `analog_video`: detected standard, line timing, lines/frame, and audio-subcarrier status. |
 
 ---
 
@@ -82,9 +86,14 @@ python3 tools/explainable_demod.py --file <path> --mode <mode> --rate <sample_ra
 
 ### 8. Analog Video (`analog_video`)
 *   **Use Case**: FPV analog drone video feeds (PAL/NTSC).
-*   **Required Options**:
-    *   `--line-samples`: Number of samples per line raster (e.g. `1280` or `1560`).
-    *   `--video-lines`: Active line count (e.g. `576` for PAL, `480` for NTSC).
+*   **Auto-detection**: Measures the line rate + lines-per-frame, prints the detected standard (NTSC vs PAL), and auto-derives the raster geometry. Also flags any FM audio subcarrier near 6.0/6.5 MHz while **rejecting line-rate harmonics** (on PAL those land exactly at 6.0/6.5 MHz).
+*   **Optional Overrides**:
+    *   `--line-samples`: Force samples per line (else auto-measured).
+    *   `--video-lines`: Force active line count (else 525 NTSC / 625 PAL).
+*   **Example** (geometry auto-detected):
+    ```bash
+    python3 tools/explainable_demod.py --file fpv.sigmf-meta --mode analog_video
+    ```
 
 ---
 

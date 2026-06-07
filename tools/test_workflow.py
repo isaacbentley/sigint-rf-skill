@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import sys
+import json
 import numpy as np
 import subprocess
 
@@ -337,7 +338,124 @@ def main():
         if os.path.exists(filepath):
             os.remove(filepath)
 
-    print("\n=== All workflow tests (FSK + OOK + TPMS) passed successfully! ===")
+    # =========================================================================
+    # Analog Video (FPV) Test Case — exercises the analog_video generator, SigMF
+    # resolution + bounded read in explainable_demod, auto NTSC/PAL detection,
+    # the audio-subcarrier (vs line-harmonic) detector, and the negative-offset fix.
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("=== Analog Video (FPV NTSC) Test Case ===")
+    print("=" * 60)
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    fpv_data = os.path.join(here, "test_fpv.cf32")
+    fpv_meta = os.path.splitext(fpv_data)[0] + ".sigmf-meta"
+
+    # 1. Synthesize an NTSC FPV signal (with a real 6.5 MHz audio subcarrier) + SigMF sidecar
+    cmd_fpv_gen = [
+        sys.executable,
+        "tools/generate_demo_signal.py",
+        "--type", "analog_video",
+        "--standard", "ntsc",
+        "--audio_subcarrier",
+        "--duration", "0.08",
+        "--output_file", fpv_data,
+    ]
+    run_cmd(cmd_fpv_gen, "Synthesize an NTSC analog FPV video signal with a 6.5 MHz audio subcarrier.")
+
+    if not (os.path.exists(fpv_data) and os.path.exists(fpv_meta)):
+        print("   ❌ analog_video generator did not write both the .cf32 and .sigmf-meta.")
+        sys.exit(1)
+    print("   ✅ Generated FPV capture + SigMF metadata sidecar")
+
+    # 2. Demodulate by pointing ONLY at the .sigmf-meta (no --rate / --format):
+    #    verifies SigMF resolution + bounded read + auto NTSC/PAL + subcarrier detection.
+    fpv_plot = os.path.join(here, "test_fpv_diagnostics.png")
+    fpv_json = os.path.join(here, "test_fpv_analysis.json")
+    cmd_fpv_demod = [
+        sys.executable,
+        "tools/explainable_demod.py",
+        "--file", fpv_meta,
+        "--mode", "analog_video",
+        "--plot-path", fpv_plot,
+        "--json-output", fpv_json,
+    ]
+    stdout_fpv = run_cmd(cmd_fpv_demod, "Demodulate analog video straight from SigMF (auto rate/format/geometry).")
+
+    for needle, ok_msg, err_msg in [
+        ("rate 20.000 MSPS", "explainable_demod resolved sample rate from SigMF metadata",
+         "SigMF sample-rate resolution failed (expected 20.000 MSPS)."),
+        ("Detected standard: NTSC", "Auto-detected analog video standard: NTSC",
+         "NTSC standard was not auto-detected."),
+        ("Audio subcarrier: PRESENT", "Detected the 6.5 MHz FM audio subcarrier",
+         "Audio subcarrier was not detected on the NTSC feed."),
+    ]:
+        if needle in stdout_fpv:
+            print(f"   ✅ {ok_msg}")
+        else:
+            print(f"   ❌ {err_msg}")
+            sys.exit(1)
+
+    fpv_frame = fpv_plot.replace(".png", "_frame.png")
+    if os.path.exists(fpv_frame) and os.path.getsize(fpv_frame) > 0:
+        print(f"   ✅ Reconstructed video frame written: {fpv_frame}")
+    else:
+        print("   ❌ Reconstructed video frame is missing.")
+        sys.exit(1)
+
+    with open(fpv_json) as jf:
+        demod_analysis = json.load(jf)
+    if demod_analysis.get("video_standard") == "NTSC" and demod_analysis.get("audio_subcarrier_status") == "present":
+        print("   ✅ Demod JSON carries video_standard=NTSC + audio_subcarrier_status=present")
+    else:
+        print(f"   ❌ Demod JSON missing/incorrect analysis fields: {demod_analysis}")
+        sys.exit(1)
+
+    # 2b. Sidecar discovery: point at the RAW .cf32 (no --rate) and confirm the
+    #     adjacent .sigmf-meta is found and its 20 MSPS rate applied (regression
+    #     test for the filename-vs-filepath sidecar-resolution fix).
+    sidecar_report = os.path.join(here, "test_fpv_sidecar.md")
+    sidecar_json = os.path.join(here, "test_fpv_sidecar.json")
+    cmd_sidecar = [
+        sys.executable, "tools/triage_iq.py",
+        "--file", fpv_data, "--mode", "triage", "--no-plot",
+        "--output", sidecar_report, "--json-output", sidecar_json,
+    ]
+    stdout_sidecar = run_cmd(cmd_sidecar, "Resolve the .sigmf-meta sidecar from the raw .cf32 path (no --rate).")
+    if "20.000 MSPS" in stdout_sidecar:
+        print("   ✅ Sidecar .sigmf-meta discovered from the raw .cf32 path (rate applied)")
+    else:
+        print("   ❌ Sidecar resolution from raw .cf32 failed (expected 20.000 MSPS).")
+        sys.exit(1)
+    with open(sidecar_json) as jf:
+        triage_analysis = json.load(jf)
+    if triage_analysis.get("video_standard") == "NTSC":
+        print("   ✅ Triage JSON carries video_standard=NTSC (gated FM-video detection)")
+    else:
+        print(f"   ❌ Triage JSON missing video_standard: {triage_analysis.get('video_standard')}")
+        sys.exit(1)
+
+    # 3. Negative scientific-notation offset must parse (the argparse footgun fix)
+    neg_report = os.path.join(here, "test_fpv_neg.md")
+    cmd_neg = [
+        sys.executable,
+        "tools/triage_iq.py",
+        "--file", fpv_meta,
+        "--mode", "triage",
+        "--offset-hz", "-2e6",
+        "--no-plot",
+        "--output", neg_report,
+    ]
+    run_cmd(cmd_neg, "Verify a bare negative scientific-notation offset (--offset-hz -2e6) parses.")
+    print("   ✅ Bare negative sci-notation offset parsed without argparse error")
+
+    # Clean up FPV test files
+    fpv_dashboard = fpv_plot.replace(".png", "_dashboard.png")
+    for filepath in [fpv_data, fpv_meta, fpv_plot, fpv_frame, fpv_dashboard, neg_report, sidecar_report, fpv_json, sidecar_json]:
+        if os.path.exists(filepath):
+            os.remove(filepath)
+
+    print("\n=== All workflow tests (FSK + OOK + TPMS + FPV) passed successfully! ===")
 
 if __name__ == "__main__":
     main()

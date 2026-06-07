@@ -55,6 +55,8 @@ When you generate a JSON metrics file, it contains the following keys. Use this 
 }
 ```
 
+**Analog-video extras**: when the isolated signal is constant-envelope wideband FM (FPV/CVBS) in `--mode triage`, the JSON additionally includes `video_standard` (`"NTSC"`/`"PAL"`), `video_line_us`, `video_line_hz`, `video_frame_lines`, `audio_subcarrier_status` (`"present"`/`"ambiguous_harmonic"`/`"absent"`), and `audio_subcarrier_hz`. (`explainable_demod.py --mode analog_video --json-output` writes the same analysis fields.)
+
 ### Key Metrics & Decision Rules for Agents
 
 1.  **SNR Validation (`snr_db`)**:

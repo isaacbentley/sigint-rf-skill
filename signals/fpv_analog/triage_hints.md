@@ -7,12 +7,12 @@ These hints help the LLM identify and verify FPV Analog video signals from stati
 ## 🔍 Key Spectral Indicators
 
 ### 1. Occupied Bandwidth (OBW)
-* Standard analog FPV signals exhibit an OBW (99%) between **20.0 MHz and 30.0 MHz**.
-* While the FM peak deviation is usually 4 to 8 MHz, Carson's rule dictates the total occupied bandwidth spans much wider.
+* Analog FPV OBW (99%) is **wide and deviation-dependent — roughly 12–30 MHz**. By Carson's rule $B \approx 2(\Delta f + f_m)$ it scales with the FM peak deviation (commonly 4–8 MHz) plus the video bandwidth.
+* Channel-isolation filtering during triage reports the lower end (e.g. ~15 MHz measured on an 8 MHz-deviation capture); the unfiltered on-air signal is wider. Do **not** reject an FPV candidate just because OBW reads ~15 MHz instead of 25+ MHz.
 
 ### 2. Extremely Low PAPR (Peak-to-Average Power Ratio)
-* Wideband FM signals have a constant envelope in the time domain. 
-* PAPR is **strictly between 0.0 dB and 1.5 dB** (typically <1.0 dB). This is the single strongest indicator distinguishing analog FPV from digital signals like Wi-Fi or OcuSync, which have PAPR values > 8.0 dB.
+* Wideband FM has a near-constant envelope, so PAPR is **low — typically ~0.5–3 dB** in practice. The ideal is ~0 dB, but residual AM from sync tips, channel-isolation filtering, and included adjacent-channel/noise energy push real measurements up (≈2 dB is common after a band-pass).
+* The discriminator that matters is the gap to **digital** signals: Wi-Fi / DJI OcuSync show PAPR > 8 dB. Treat "low single-digit-dB PAPR + a constant-envelope IQ ring" as the FPV signature — not a hard < 1.5 dB cutoff.
 
 ### 3. OFDM Flatness Score
 * Because it is a single carrier FM signal, the spectrum does not have a flat top. The flatness score will be **low (< 0.4)**.
@@ -50,4 +50,6 @@ If the triage report displays a strong correlation peak at these lag bounds, it 
 ## 🛠 Demodulation Tooling Notes
 
 * **`explainable_demod.py` Capabilities**: The local `explainable_demod.py` script now features an intelligent **Sync-Lock Separator** that automatically detects H-Sync pulses and perfectly straightens the rasterized video lines without manual stride tuning.
+* **Automatic NTSC/PAL identification**: `--mode analog_video` measures the horizontal line period and lines-per-frame from the demodulated baseband and prints the detected standard (NTSC ≈ 63.56 µs / 525 lines; PAL = 64.0 µs / 625 lines). `--line-samples` / `--video-lines` are **auto-derived** — pass them only to force a value.
+* **Audio-subcarrier caveat**: the tool flags an FM audio subcarrier near 6.0/6.5 MHz but **rejects line-rate harmonics**. On PAL, 6.0 and 6.5 MHz are exactly 384× and 416× the 15625 Hz line rate, so energy there is reported as an *ambiguous harmonic*, not a confirmed subcarrier. A real subcarrier reads cleanly on NTSC (whose line rate doesn't divide evenly into 6.0/6.5 MHz).
 * **Limitations**: While it properly aligns the luma (black and white) image, it does not decode the color burst subcarrier. The resulting frames will be crisp and perfectly synced, but grayscale. Use this as an educational point for the operator: while it confirms the presence of video geometry, a dedicated tool like `tvsharp` or a GNU Radio CVBS block is required for proper color recovery.
