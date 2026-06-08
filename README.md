@@ -51,32 +51,9 @@ The agent handles the signal processing behind the scenes, picks the right decod
 
 ---
 
-## 💻 Local Offline Web UI (`apps/app.py`)
+## 💻 Local Offline Web UI
 
-If you want to try the triage pipeline and chat with the **Signals Intelligence RF Expert** offline without setting up an IDE coding agent, you can run the local PoC web server included in this repository.
-
-It runs **Gemma 4** on Apple Silicon Macs via the MLX framework, reads `SKILL.md` as its system prompt, and hosts a web UI where you can generate demo signals, upload captures, and let the model analyze both the text triage reports and the visual diagnostic plots.
-
-For more details on the web application, see the [Web App README](file:///Users/ibentley/Documents/src/sigint-rf-skill/apps/README.md).
-
-### Running the Server
-
-Using `uv` (recommended — handles Python and all dependencies automatically):
-```bash
-uv run apps/app.py
-```
-
-Or using standard python/pip (within a virtual environment):
-```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r apps/requirements.txt
-python apps/app.py
-```
-
-Then open **[http://127.0.0.1:8765](http://127.0.0.1:8765)** in your browser.
-
-> ℹ️ **First Run Note**: The first time you send a message, the model weights (~7 GB for the default 4-bit Gemma 4 model) will be downloaded automatically from Hugging Face. The Web UI and triage pipeline will load immediately and be functional while the download runs in your terminal.
+A local offline web UI — a proof-of-concept that runs Gemma on Apple Silicon (MLX), reads `SKILL.md` as its system prompt, and lets you generate demo signals, upload captures, and chat with the model in the browser — lives on the [`web-app`](https://github.com/isaacbentley/sigint-rf-skill/tree/web-app) branch (see its `apps/` directory).
 
 ---
 
