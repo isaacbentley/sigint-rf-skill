@@ -22,6 +22,8 @@ The recommended path for any terminal-capable agent — Claude Code, Gemini / Go
 > 3. **Install the Python tool dependencies:** Set up a local Python virtual environment (`python3 -m venv venv` and activate it) or use `uv`, then install dependencies: `pip install -r <clone>/tools/requirements.txt` (or run tools via `uv run tools/<tool_name>.py`).
 > 4. **Confirm** by reading `SKILL.md`'s frontmatter, then tell me where you installed it and how to update it later with `git -C <clone> pull`.
 
+> 🔄 **Updating & verifying later:** pull with `git -C <clone> pull`, then confirm the skill still loads by checking that `SKILL.md`'s `name:` frontmatter is intact. Your installed copy under `~/.claude/skills/` is a **separate clone** from any development checkout — the two can drift (e.g. if you push new commits from a dev repo), so re-pull the install after you publish skill changes.
+
 ---
 
 ## 🚀 Quick Start
