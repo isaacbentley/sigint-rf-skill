@@ -19,7 +19,7 @@ python3 tools/triage_iq.py --file <path_to_iq_file> --rate <sample_rate_hz> [opt
 | `--file` | `-f` | String | *Required* | Path to the IQ file (`.bin`, `.cf32`, `.sigmf-data`, or `.sigmf-meta`). |
 | `--rate` | `-r` | Float | `15.36e6` | Sample rate in Hz (ignored if SigMF metadata is found). |
 | `--freq` | `-c` | Float | `None` | Center frequency in Hz (loaded from SigMF if found). |
-| `--format` | — | Choice | `None` | Input format: `cf32_le` (float32 IQ) or `ci16_le` (int16 IQ). Autodetected if omitted. |
+| `--format` | — | Choice | `None` | Input format: `cf32_le` (float32 IQ), `ci16_le` (int16 IQ), `cu8` (RTL-SDR native uint8), or `ci8` (HackRF native int8). Autodetected / from SigMF if omitted. |
 | `--duration`| — | Float | `0.150` | Seconds of data to analyze. Set to `0` to analyze up to `--max-samples`. |
 | `--max-samples`| — | Int | `2000000` | Maximum samples to read if `--duration` is 0. |
 | `--output` | `-o` | String | `triage_report.md`| Filename for the output markdown report. |

@@ -41,7 +41,7 @@ def parse_args():
     parser.add_argument("--file", "-f", required=True, help="Path to IQ sample file")
     parser.add_argument("--rate", "-r", type=float, default=15.36e6, help="Sample rate in Hz")
     parser.add_argument("--freq", "-c", type=float, default=None, help="Assigned center frequency in Hz")
-    parser.add_argument("--format", choices=["cf32_le", "ci16_le"], default=None, help="IQ format (autodetected / from SigMF metadata if omitted)")
+    parser.add_argument("--format", choices=["cf32_le", "ci16_le", "cu8", "ci8"], default=None, help="IQ format: cf32_le, ci16_le, cu8 (RTL-SDR uint8), ci8 (HackRF int8). Autodetected / from SigMF metadata if omitted.")
     parser.add_argument("--duration", type=float, default=0.0, help="Seconds of data to read (0 = use --max-samples)")
     parser.add_argument("--max-samples", type=int, default=20_000_000, help="Max complex samples to read when --duration is 0 (bounds RAM on large captures)")
     parser.add_argument("--mode", choices=["fsk", "ook", "fm_audio", "am_audio", "analog_video", "psk", "qam", "lora", "ofdm", "sc-fdma", "analog_fm", "analog_am"], required=True, help="Demodulation mode")
@@ -146,21 +146,63 @@ def read_iq_samples(file_path, datatype, max_samples):
         print(f"Error: Data file not found at {file_path}", file=sys.stderr)
         sys.exit(1)
 
-    if datatype == "cf32_le":
+    # SigMF and the SDR toolchain spell the same format several ways; fold the
+    # common aliases (and the raw uint8/int8 that rtl_sdr / hackrf_transfer emit)
+    # onto the four datatypes we actually decode below.
+    dt = (datatype or "").strip().lower()
+    dt = {
+        "fc32": "cf32_le", "cf32": "cf32_le",
+        "cs16_le": "ci16_le", "ci16": "ci16_le", "sc16": "ci16_le",
+        "uint8": "cu8", "u8": "cu8", "cu8_le": "cu8", "rtl": "cu8",
+        "int8": "ci8", "i8": "ci8", "ci8_le": "ci8", "sc8": "ci8", "hackrf": "ci8",
+    }.get(dt, dt)
+
+    if dt == "cf32_le":
         count = max_samples * 2
         raw = np.fromfile(file_path, dtype=np.float32, count=count)
         if len(raw) % 2 != 0:
             raw = raw[:-1]
         samples = raw[0::2] + 1j * raw[1::2]
-    elif datatype == "ci16_le":
+    elif dt == "ci16_le":
         count = max_samples * 2
         raw = np.fromfile(file_path, dtype=np.int16, count=count)
         if len(raw) % 2 != 0:
             raw = raw[:-1]
         samples = (raw[0::2] + 1j * raw[1::2]) / 32768.0
+    elif dt == "cu8":
+        # RTL-SDR native: unsigned 8-bit IQ with a DC bias at 127.5
+        count = max_samples * 2
+        raw = np.fromfile(file_path, dtype=np.uint8, count=count).astype(np.float32)
+        if len(raw) % 2 != 0:
+            raw = raw[:-1]
+        raw -= 127.5          # in place: a full wideband read is big, avoid copies
+        raw /= 127.5
+        samples = raw[0::2] + 1j * raw[1::2]
+    elif dt == "ci8":
+        # HackRF native: signed 8-bit IQ; normalize to [-1.0, 1.0]
+        count = max_samples * 2
+        raw = np.fromfile(file_path, dtype=np.int8, count=count).astype(np.float32)
+        if len(raw) % 2 != 0:
+            raw = raw[:-1]
+        raw /= 127.5          # in place
+        samples = raw[0::2] + 1j * raw[1::2]
     else:
         print(f"Error: Unsupported datatype {datatype}", file=sys.stderr)
         sys.exit(1)
+
+    # Guard against corrupt captures: scrub non-finite samples and clamp absurd
+    # magnitudes so a bad file degrades gracefully instead of poisoning the DSP.
+    invalid_mask = ~np.isfinite(samples)
+    if np.any(invalid_mask):
+        print(f"Warning: Replaced {np.sum(invalid_mask)} NaN/Inf samples with 0+0j.", file=sys.stderr)
+        samples[invalid_mask] = 0.0 + 0.0j
+    # Clamp in place (bool compares + out=) to avoid a second big transient copy.
+    max_val = 1000.0
+    if (np.any(samples.real > max_val) or np.any(samples.real < -max_val)
+            or np.any(samples.imag > max_val) or np.any(samples.imag < -max_val)):
+        print("Warning: Clamping extremely large values to prevent overflow. Data may be corrupted.", file=sys.stderr)
+        np.clip(samples.real, -max_val, max_val, out=samples.real)
+        np.clip(samples.imag, -max_val, max_val, out=samples.imag)
 
     return samples
 

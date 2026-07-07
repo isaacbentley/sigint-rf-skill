@@ -178,8 +178,8 @@ If a IQ data file lacks metadata about it's format, `triage_iq.py` may mistakenl
 **Tip — avoid the trap with SigMF**: Pass a `.sigmf-meta` file to `triage_iq.py` *or* `explainable_demod.py` and the datatype, sample rate, and center frequency are read straight from the metadata — no `--rate` or `--format` needed. Both tools also bound their reads (`--duration` / `--max-samples`), so a multi-GB wideband capture won't be slurped whole into RAM.
 
 ### 4. Manual SDR Captures (If capturing live)
-* **RTL-SDR**: `rtl_sdr -f 433920000 -s 2048000 -g 30 capture.bin` (converts to raw uint8 IQ)
-* **HackRF**: `hackrf_transfer -r capture.bin -f 915000000 -s 2000000 -g 24` (converts to raw int8 IQ)
+* **RTL-SDR**: `rtl_sdr -f 433920000 -s 2048000 -g 30 capture.bin` (raw uint8 IQ) — triage/demod it directly with `--format cu8`.
+* **HackRF**: `hackrf_transfer -r capture.bin -f 915000000 -s 2000000 -g 24` (raw int8 IQ) — triage/demod it directly with `--format ci8`.
 
 ---
 

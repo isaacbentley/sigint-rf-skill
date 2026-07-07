@@ -15,7 +15,7 @@ python3 tools/explainable_demod.py --file <path> --mode <mode> --rate <sample_ra
 | `--file` | String | *Required* | Path to the IQ file. Accepts a `.sigmf-meta` / `.sigmf-data` — sample rate, datatype, and center frequency are auto-loaded from the metadata. |
 | `--mode` | Choice | *Required* | Demodulation mode: `fsk`, `ook`, `fm_audio`, `am_audio`, `analog_video`, `analog_fm`, `analog_am`, `psk`, `qam`, `lora`, `ofdm`, `sc-fdma`. |
 | `--rate` | Float | `15.36e6` | Sample rate in Hz. Ignored when SigMF metadata supplies it. |
-| `--format` | Choice | *auto* | IQ format: `cf32_le` or `ci16_le`. Auto-detected from SigMF / file extension if omitted. |
+| `--format` | Choice | *auto* | IQ format: `cf32_le`, `ci16_le`, `cu8` (RTL-SDR uint8), or `ci8` (HackRF int8). Auto-detected from SigMF / file extension if omitted. |
 | `--duration` | Float | `0.0` | Seconds of data to read (`0` = use `--max-samples`). |
 | `--max-samples` | Int | `20000000` | Cap on complex samples read when `--duration` is 0 — bounds RAM on large (multi-GB) captures. |
 | `--offset-hz`| Float | `0.0` | Frequency shift in Hz to center the signal. Negative scientific notation works (e.g. `--offset-hz -25e6`). |
