@@ -1,0 +1,75 @@
+{
+  "skill_name": "sigint-rf-skill",
+  "notes": "Behavioral eval set for the SigInt RF skill. Prompts are what a real operator would type. Most are self-contained (the agent generates its own demo capture via tools/generate_demo_signal.py), so they run without bundling binary captures. To benchmark: run each prompt once with the skill installed and once against the pre-improvement baseline (git commit b536ead), then grade the assertions below. Assertions are behavioral checks, not exact-string matches.",
+  "evals": [
+    {
+      "id": 1,
+      "name": "no-hardware-demo-then-decode",
+      "prompt": "I don't have an SDR yet but I want to try this out — can you make me a practice signal and then actually pull the hidden data out of it?",
+      "expected_output": "Synthesizes a GMSK demo capture with generate_demo_signal.py (hiding 0xDEADBEEF), triages it, presents a demodulation proposal for the operator to confirm, then demodulates and recovers the 0xDEADBEEF payload. Triage plot shown inline.",
+      "files": [],
+      "assertions": [
+        "Runs tools/generate_demo_signal.py to synthesize a practice capture",
+        "Runs tools/triage_iq.py on the generated capture",
+        "Presents a demodulation proposal / HITL checkpoint before running the demodulator",
+        "Recovers and reports the hidden 0xDEADBEEF payload",
+        "Displays or embeds the triage plot inline rather than only citing a file path"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "triage-and-identify-cf32",
+      "prompt": "I've got a capture at captures/mystery_capture.cf32 sampled at 2.048 Msps. What is it, and how do you know?",
+      "expected_output": "Runs triage_iq.py, reports center frequency, occupied bandwidth, and modulation class, cross-references signals/reference_matrix.md, and names a candidate protocol with an explicit confidence level and the metrics that justify it.",
+      "files": [],
+      "assertions": [
+        "Runs tools/triage_iq.py on the capture",
+        "Reports center frequency, occupied bandwidth, and a modulation classification",
+        "Cross-references signals/reference_matrix.md rather than guessing from memory",
+        "States an explicit confidence level (High/Medium/Low) with supporting metrics",
+        "Rounds user-facing numbers for readability (e.g. kHz/MSPS, integer dB SNR)"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "analog-fpv-ntsc-vs-pal",
+      "prompt": "I think I've got an analog FPV video feed around 5.8 GHz. Can you generate a sample, work out whether it's NTSC or PAL, and pull a frame?",
+      "expected_output": "Generates an analog_video demo (generate_demo_signal.py --type analog_video), runs explainable_demod.py --mode analog_video, identifies NTSC vs PAL by measuring the line rate (not by assuming), reports the FM audio subcarrier status, and reconstructs a frame shown inline.",
+      "files": [],
+      "assertions": [
+        "Generates an analog_video demo signal (writes a matching .sigmf-meta)",
+        "Runs tools/explainable_demod.py in analog_video mode",
+        "Identifies NTSC vs PAL by measuring the line rate / lines-per-frame, not by assuming a standard",
+        "Reports the FM audio subcarrier status (present / absent / ambiguous)",
+        "Displays the reconstructed frame inline"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "unknown-signal-web-escalation",
+      "prompt": "I found a steady signal at 868.3 MHz, roughly 25 kHz wide, looks like narrowband FSK, here in Europe. It doesn't obviously match anything I know — what is it?",
+      "expected_output": "After a matrix/library cross-reference yields only low confidence, triggers the Web Research Protocol (sigidwiki, FCC/ETSI allocations, fccid.io), presents findings with a confidence level and source links, and asks for human confirmation before writing any new library entry.",
+      "files": [],
+      "assertions": [
+        "Cross-references signals/reference_matrix.md and the signals/ library before escalating",
+        "Triggers web research (sigidwiki / FCC-ETSI / fccid) when confidence is low",
+        "Presents findings with a confidence level and cited source URLs",
+        "Asks for human confirmation before creating a new signals/ library entry",
+        "Does not fabricate a decode or a definitive identification from insufficient evidence"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "rtl-sdr-native-uint8-format",
+      "prompt": "I recorded something off my RTL-SDR with rtl_sdr into capture.bin at 2.4 Msps around 433.9 MHz — I think it's a wireless sensor. Can you triage it?",
+      "expected_output": "Recognizes rtl_sdr's native unsigned-8-bit format and triages with --format cu8 (or correct auto-detection) without a format-mismatch error, reports plausible bandwidth/modulation, and suggests rtl_433 as the companion decoder for sub-GHz ISM sensors.",
+      "files": [],
+      "assertions": [
+        "Reads the capture as RTL-SDR native uint8 (cu8) — uses --format cu8 or detects it — without a format error or white-noise output",
+        "Runs tools/triage_iq.py successfully on the cu8 capture",
+        "Reports a plausible bandwidth and modulation classification",
+        "Suggests rtl_433 as the companion decoder for 433 MHz ISM sensors"
+      ]
+    }
+  ]
+}
