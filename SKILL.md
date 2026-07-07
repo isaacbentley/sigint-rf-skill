@@ -261,9 +261,11 @@ graph TD
 ---
 
 ## Signal Library Directory Structure
-The [signals/](signals/) directory contains detailed protocol specifications and triage hints organized by protocol family. Each entry contains:
+The [signals/](signals/) directory contains detailed protocol specifications and triage hints organized by protocol family. Most entries contain:
 - **`spec.md`** — Full protocol specification (PHY, framing, demod pipeline, tools)
 - **`triage_hints.md`** — Quick identification guide (spectral/temporal indicators, differentiation table, confidence checklist)
+
+Two consistency notes: legacy/phased-out systems (the `trunking_*` entries) ship `spec.md` only, and a few actively-deployed reference-matrix rows (e.g. TETRA, NOAA Weather Radio) have no dedicated folder yet — triage those from the matrix row plus web research, then offer to add a library entry via the Web Research Protocol.
 
 > 💡 **Progressive Disclosure Rule**: Do not attempt to memorize all protocol details. Once you identify a candidate protocol, you MUST use your file reading tools to ingest the corresponding `signals/{protocol_name}/spec.md` file (located under [signals/](signals/)) before generating decoding flowgraphs, code, or deep technical explanations.
 

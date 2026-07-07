@@ -9,6 +9,7 @@ __pycache__/
 *.raw
 *.sigmf-data
 *.sigmf-meta
+*.rtsa
 
 # Generated diagnostic plots
 *_plot.png

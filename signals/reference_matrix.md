@@ -49,6 +49,8 @@ Use this matrix to cross-reference extracted metrics with candidate protocols:
 | 470 - 862 MHz | 8 MHz | OFDM | Continuous broadcast | 2K/8K FFT modes, scattered pilots | **DVB-T / DVB-T2** |
 | 700 MHz - 2.6 GHz | 1.4 - 20 MHz | OFDM / SC-FDMA | Continuous downlink | Zadoff-Chu PSS/SSS, Cell RS | **LTE / 4G Cellular** |
 
-> 🕰️ **Note on Legacy Signals**: The table above focuses on protocols actively and commonly deployed in 2025. For legacy or phased-out systems (e.g., Motorola SmartNet, EDACS, LTR, OpenSky, iDEN, MPT-1327, TETRAPOL, GSM 2G), you will automatically cross-reference the local `signals/` library or conduct web research.
+> 🕰️ **Note on Legacy Signals**: The table above focuses on protocols actively and commonly deployed today. For legacy or phased-out systems (e.g., Motorola SmartNet, EDACS, LTR, OpenSky, iDEN, MPT-1327, TETRAPOL, GSM 2G), you will automatically cross-reference the local `signals/` library or conduct web research.
+
+> 📁 **Matrix-only rows**: most rows map to a dedicated folder under [signals/](.) (`spec.md` + `triage_hints.md`). A couple of actively-deployed rows — **TETRA** and **NOAA Weather Radio (NWR)** — are matrix-only for now: triage them from the row plus web research, then offer to add a library entry.
 
 > 📡 **Band Plan References**: Cross-reference frequencies against regulatory allocations in [band_plans/](band_plans/) — [ITU](band_plans/itu_allocations.md), [FCC US](band_plans/fcc_us_allocations.md), [EU CEPT](band_plans/eu_cept_allocations.md)

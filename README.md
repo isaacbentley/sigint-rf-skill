@@ -103,7 +103,10 @@ You'll rarely call these yourself — your agent runs them for you when you ask.
 |---|---|
 | [tools/discover_and_capture.py](tools/discover_and_capture.py) | Automated wideband scan → peak detection → IQ capture → triage pipeline using `rtl_power` and `rtl_sdr` |
 | [tools/triage_iq.py](tools/triage_iq.py) | Extracts spectral, temporal, and autocorrelation features from raw IQ files; generates markdown reports and diagnostic plots |
-| [tools/explainable_demod.py](tools/explainable_demod.py) | Step-by-step explainable demodulator supporting FSK, FM audio, and analog video modes with diagnostic plots |
+| [tools/explainable_demod.py](tools/explainable_demod.py) | Step-by-step explainable demodulator (FSK/OOK, FM/AM audio, PSK/QAM, LoRa, OFDM/SC-FDMA, analog video/FM/AM) with diagnostic plots |
+| [tools/generate_demo_signal.py](tools/generate_demo_signal.py) | Synthesizes a practice IQ capture (GMSK/FSK/FM burst, or an NTSC/PAL analog-video FPV signal with a matching SigMF) so you can try the pipeline with no SDR |
+
+> 🧪 **Tests**: [tools/test_workflow.py](tools/test_workflow.py) exercises the end-to-end synth → triage → demod pipeline; [tools/test_read.py](tools/test_read.py) is a fast regression for IQ format decoding (cf32/ci16/cu8/ci8) and the corrupt-capture guard.
 
 ---
 
